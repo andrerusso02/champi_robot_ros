@@ -27,6 +27,15 @@ class VisualLocalizationNode(Node):
         super().__init__('visual_loc')
 
 
+        # Parameters
+        self.enable_viz_keypoints = self.declare_parameter('enable_viz_keypoints', True).value
+        self.enable_match_viz = self.declare_parameter('enable_match_viz', True).value
+
+        # Print parameters
+        self.get_logger().info(f"enable_viz_keypoints: {self.enable_viz_keypoints}")
+        self.get_logger().info(f"enable_match_viz: {self.enable_match_viz}")
+
+
         # handle camera info
         self.camera_info = None
         self.subscription_cam_info = self.create_subscription(
@@ -41,7 +50,13 @@ class VisualLocalizationNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.bird_view = None
 
+        # Map to undistort the image
+        self.map1 = None
+        self.map2 = None
+
         # other stuff
+
+        self.img_viz = None
 
         self.cv_bridge = CvBridge()
 
@@ -71,21 +86,59 @@ class VisualLocalizationNode(Node):
         self.subscription = self.create_subscription(
             Image,
             '/image_raw',
-            self.listener_callback,
+            self.image_callback,
             10)
         self.subscription  # prevent unused variable warning
 
+
+    def init_bird_view(self):
+        transform = None
+        try:
+            # get transform, which is what we need to wait for
+            transform = self.tf_buffer.lookup_transform('base_link', 'camera',rclpy.time.Time().to_msg()) # todo use camera info
+
+            # # unsubscribe from camera info (can't do that in the callback otherwise the nodes crashes) TODO IT MAKES THE NODE CRASH
+            # self.subscription_cam_info.destroy()
+
+            # compute transform between the 2 frames as 1 matrix
+            rot = R.from_quat([transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w])
+            rot = rot.as_matrix()
+            trans = np.array([transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z])
+            transform_mtx = np.concatenate([rot, trans.reshape(3,1)], axis=1)
+            transform_mtx = np.concatenate([transform_mtx, np.array([[0,0,0,1]])], axis=0)
+
+            # initialize bird view
+            K = np.array(self.camera_info.k).reshape(3,3)
+            self.bird_view = bv.BirdView(K, transform_mtx, (0, -1), (2.7, 1.4), resolution=378) 
+
+            # compute undistortion map
+            self.map1, self.map2 = cv2.initUndistortRectifyMap(K, np.array(self.camera_info.d), None, K, (640,480), cv2.CV_32FC1)
+
+            self.get_logger().info("Node Initialized", once=True)
+
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            self.get_logger().info("waiting for tf2 transform...", once=True)
+            return
+    
+    def preprocess(self, image):
+
+        # median blur
+        image = cv2.medianBlur(image, 11)
+
+
+    
 
     def callback_cam_info(self, msg):
         if self.camera_info is None:
             self.camera_info = msg
 
 
-    def listener_callback(self, msg):
+    def image_callback(self, msg):
 
         # get camera info if not already
         if self.camera_info is None:
             self.get_logger().info("waiting for camera info...", once=True)
+
             return
         
         self.get_logger().info("camera info received", once=True)
@@ -93,51 +146,29 @@ class VisualLocalizationNode(Node):
 
         # initialize bird view if not already
         if self.bird_view is None:
-            transform = None
-            try:
-                # get transform, which is what we need to wait for
-                transform = self.tf_buffer.lookup_transform('base_link', 'camera',rclpy.time.Time().to_msg()) # todo use camera info
+            self.init_bird_view()
 
-                # # unsubscribe from camera info (can't do that in the callback otherwise the nodes crashes)
-                # self.subscription_cam_info.destroy()
-
-                print("transform: ", transform.transform.translation)
-                print("rotation: ", transform.transform.rotation)
-
-                # compute transform between the 2 frames as 1 matrix
-                rot = R.from_quat([transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w])
-                rot = rot.as_matrix()
-                trans = np.array([transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z])
-                transform_mtx = np.concatenate([rot, trans.reshape(3,1)], axis=1)
-                transform_mtx = np.concatenate([transform_mtx, np.array([[0,0,0,1]])], axis=0)
-
-                print("transform_mtx: ", transform_mtx)
-
-                # initialize bird view
-                self.init_bird_view(transform_mtx)
- 
-            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-                self.get_logger().info("waiting for tf2 transform...", once=True)
-                return
-        
-        self.get_logger().info("transform received", once=True)
 
         # convert to cv2
         cv_image = self.cv_bridge.imgmsg_to_cv2(msg, 'bgr8')
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
 
+        # undistort
+        cv_image = cv2.remap(cv_image, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
+
         self.curent_image = cv_image
 
         # get bird view
-        bird_view_img = self.bird_view.project_img_to_bird(cv_image)
+        bird_view_img = self.bird_view.project_img_to_bird(self.curent_image)
 
-        self.get_logger().info("size: " + str(bird_view_img.shape))
+        self.preprocess(bird_view_img)
 
         # get homography
         ok, M, matchesMask, kp1, kp2, good = self.get_homography_bird_to_ref(bird_view_img)
 
         if not ok:
             self.get_logger().info("no homography found")
+            self.visualization()
             return
 
         angle = self.get_angle(M)
@@ -151,33 +182,6 @@ class VisualLocalizationNode(Node):
         self.get_logger().info(f"angle: {angle}, pos: {pos_cam_in_ref_m}")
 
         self.visualization(bird_view_img, M, good, kp2)
-
-        # if ok:
-        #     # draw matches
-        #     matches_img = self.draw_matches(bird_view, kp1, kp2, matchesMask, good)
-        #     tmp = cv2.resize(matches_img, (0,0), fx=0.3, fy=0.3)
-        #     cv2.imshow("Matches", tmp)
-        #     cv2.waitKey(1)
-
-        # tmp = self.draw_2D_axis(bird_view, self.pos_cam_in_bird_view_pxls, 0)
-
-        # tmp = cv2.resize(tmp, (0,0), fx=0.3, fy=0.3)
-
-        # self.draw_fps(tmp)
-
-        # cv2.imshow("Image window", tmp)
-        # # add waitKey for video to display
-        # cv2.waitKey(1)
-
-
-    def init_bird_view(self, transform):
-
-        K = np.array(self.camera_info.k).reshape(3,3)
-
-        print("K: ", K)
-        print("transform: ", transform)
-
-        self.bird_view = bv.BirdView(K, transform, (0, -0.5), (2.0, 0.5), resolution=500) 
 
 
     def get_bird_view(self):
@@ -227,6 +231,7 @@ class VisualLocalizationNode(Node):
 
         # find the keypoints and descriptors with SIFT
         kp1, des1 = self.sift_detector.detectAndCompute(bird_view, None)
+
         
         matches = self.flann_matcher.knnMatch(des1, self.ref_des, k=2)
         # store all the good matches as per Lowe's ratio test.
@@ -238,6 +243,7 @@ class VisualLocalizationNode(Node):
         M=None
         ok = False
         if len(good)>MIN_MATCH_COUNT:
+            self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
             src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
             dst_pts = np.float32([ self.ref_kp[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
             M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
@@ -247,8 +253,26 @@ class VisualLocalizationNode(Node):
             dst = cv2.perspectiveTransform(pts,M)
             ok = True
         else:
-            self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+            # self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
             matchesMask = None
+        
+        if self.enable_viz_keypoints:
+            img_viz = cv2.drawKeypoints(bird_view.copy(), kp1, None)
+
+            cv2.imshow("Keypoints", img_viz)
+            cv2.waitKey(1)
+
+            img_ref_viz = cv2.drawKeypoints(self.ref_img.copy(), self.ref_kp, None)
+            cv2.imshow("Keypoints ref", img_ref_viz)
+            cv2.waitKey(1)
+        
+        if self.enable_match_viz:
+            matches_img = self.draw_matches(bird_view, kp1, self.ref_kp, matchesMask, good)
+            matches_img = cv2.resize(matches_img, (0,0), fx=0.5, fy=0.5)
+            cv2.imshow("Matches", matches_img)
+            cv2.waitKey(1)
+        
+
         
         return ok, M, matchesMask, kp1, self.ref_kp, good
 
@@ -269,12 +293,23 @@ class VisualLocalizationNode(Node):
         return angle
     
     
-    def visualization(self, bird_view, M, good, kp2):
+    def visualization(self, bird_view=None, M=None, good=None, kp2=None):
+
+        if bird_view is None or M is None or good is None or kp2 is None:
+            if self.img_viz is None:
+                return
+
+            # draw 'not enough matches' on added_image
+            self.get_logger().info("VIZ: Not enough matches")
+            cv2.putText(self.img_viz, "Not enough matches", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+            cv2.imshow("Viz", self.img_viz)
+            cv2.waitKey(1)
+            return
 
         bird_view_in_ref = cv2.warpPerspective(bird_view, M, self.ref_img.shape[::-1])
-        added_image = cv2.addWeighted(bird_view_in_ref,0.5,self.ref_img,0.5,0)
+        self.img_viz = cv2.addWeighted(bird_view_in_ref,0.5,self.ref_img,0.5,0)
 
-        added_image = cv2.cvtColor(added_image, cv2.COLOR_GRAY2BGR)
+        self.img_viz = cv2.cvtColor(self.img_viz, cv2.COLOR_GRAY2BGR)
 
         good_matches_poses = []
         for m in good:
@@ -284,22 +319,22 @@ class VisualLocalizationNode(Node):
 
         # draw matches on added_image
         for pose in good_matches_poses:
-            cv2.circle(added_image, tuple(pose.astype(int)), 3, (0,255, 0), -1)
+            cv2.circle(self.img_viz, tuple(pose.astype(int)), 3, (0,255, 0), -1)
         
         # draw origin cam
         pos_cam_in_ref_pxls = np.matmul(M, np.append(self.pos_cam_in_bird_view_pxls, 1))
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls[:2] / pos_cam_in_ref_pxls[2]
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls.astype(int)
         angle = self.get_angle(M)
-        added_image = self.draw_2D_axis(added_image, pos_cam_in_ref_pxls, angle)
+        self.img_viz = self.draw_2D_axis(self.img_viz, pos_cam_in_ref_pxls, angle)
 
         # draw origin ref
-        added_image = self.draw_2D_axis(added_image, np.array([0,0]), 0)
+        self.img_viz = self.draw_2D_axis(self.img_viz, np.array([0,0]), 0)
         
-        self.draw_fps(added_image)
+        self.draw_fps(self.img_viz)
 
 
-        cv2.imshow("Matches", added_image)
+        cv2.imshow("Viz", self.img_viz)
         cv2.waitKey(1)
 
 

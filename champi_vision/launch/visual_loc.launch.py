@@ -26,8 +26,8 @@ def generate_launch_description():
         ),
         Node(
             package='dev_tools',
-            executable='camera_info_publisher',
-            name='camera_info_publisher',
+            executable='camera_info_publisher_node.py',
+            name='camera_info_publisher_node',
             output='screen',
             parameters=[{
                 "calib_yaml_path": os.path.join(get_package_share_directory('champi_vision'), 'config', 'calib', 'raspi_cam_robotik.yaml')
