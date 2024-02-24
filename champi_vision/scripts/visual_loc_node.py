@@ -122,6 +122,8 @@ class VisualLocalizationNode(Node):
     
     def preprocess(self, image):
 
+        return
+
         # median blur
         image = cv2.medianBlur(image, 11)
 
@@ -162,6 +164,8 @@ class VisualLocalizationNode(Node):
         bird_view_img = self.bird_view.project_img_to_bird(self.curent_image)
 
         self.preprocess(bird_view_img)
+
+        
 
         # get homography
         ok, M, matchesMask, kp1, kp2, good = self.get_homography_bird_to_ref(bird_view_img)
@@ -225,6 +229,11 @@ class VisualLocalizationNode(Node):
         return image
     
 
+    def get_affine_transform_bird_to_ref(self, bird_view):
+        # get affine transformation between bird view and ref image
+        return cv2.estimateAffinePartial2D(bird_view, self.ref_img)
+    
+
     def get_homography_bird_to_ref(self, bird_view):
 
         MIN_MATCH_COUNT = 10
@@ -248,9 +257,9 @@ class VisualLocalizationNode(Node):
             dst_pts = np.float32([ self.ref_kp[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
             M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
             matchesMask = mask.ravel().tolist()
-            h,w = bird_view.shape
-            pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-            dst = cv2.perspectiveTransform(pts,M)
+            # h,w = bird_view.shape
+            # pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+            # dst = cv2.perspectiveTransform(pts,M)
             ok = True
         else:
             # self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
