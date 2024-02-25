@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
+from icecream import ic
 
 class BirdView:
 
@@ -24,6 +25,8 @@ class BirdView:
         self._pos_end_work_plane = np.array(pos_end_work_plane)
 
         self._img_size_px = (self._pos_end_work_plane - self._pos_start_work_plane) * self._resolution
+
+        ic(self._img_size_px)
         self._img_size_px = self._img_size_px.astype(np.int32)
 
         self._H = None
@@ -46,14 +49,46 @@ class BirdView:
         pts_img = self._K @ pts_cam[:3]
         pts_img = pts_img / pts_img[2]
 
-        pts_work_plane_px = pts_work_plane[:2]
-        pts_work_plane_px *= self._resolution
-        pts_work_plane_px = pts_work_plane_px.T
-        pts_work_plane_px -= self._pos_start_work_plane * self._resolution
-        pts_work_plane_px = pts_work_plane_px.astype(np.float32)
+        M_workplane_real_to_img = self.compute_M_workplane_real_to_img(self._pos_end_work_plane, self._resolution)
 
-        self._H = cv2.getPerspectiveTransform(pts_img[:2].T.astype(np.float32), pts_work_plane_px)
-    1
+        pts_work_plane_h = np.vstack((pts_work_plane[:2], np.ones((1,4))))
+        pts_work_plane_px = M_workplane_real_to_img @ pts_work_plane_h
+        pts_work_plane_px = pts_work_plane_px / pts_work_plane_px[2]
+
+        ic(pts_img[:2].T.astype(np.float32))
+        ic(pts_work_plane_px[:2].T.astype(np.float32))
+
+        self._H = cv2.getPerspectiveTransform(pts_img[:2].T.astype(np.float32), pts_work_plane_px[:2].T.astype(np.float32))
+
+    
+    def compute_M_workplane_real_to_img(self, end_point, resolution):
+        # start_point: [x, y]
+        # end_point: [x, y]
+        # resolution: [x, y]
+        # return: M matrix
+
+        # translation from origin to end_point
+        T = np.array([[1, 0, -end_point[0]],
+                    [0, 1, -end_point[1]],
+                    [0, 0, 1]])
+        # scaling
+        S = np.array([[resolution, 0, 0],
+                    [0, resolution, 0],
+                    [0, 0, 1]])
+        # rotation 90 degrees
+        R = np.array([[0, -1, 0],
+                    [1, 0, 0],
+                    [0, 0, 1]])
+        # reverse y
+        R_y = np.array([[1, 0, 0],
+                        [0, -1, 0],
+                        [0, 0, 1]])
+        
+        # Compute M
+        M = S @ R_y @ R @ T
+
+        return M
+    
     def project_img_to_bird(self, img):
         """
         Project the source image to bird's view.

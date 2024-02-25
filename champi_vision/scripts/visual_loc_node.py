@@ -21,6 +21,8 @@ from scipy.spatial.transform import Rotation as R
 
 import champi_vision.bird_view as bv
 
+from icecream import ic
+
 class VisualLocalizationNode(Node):
 
     def __init__(self):
@@ -163,18 +165,19 @@ class VisualLocalizationNode(Node):
         # get bird view
         bird_view_img = self.bird_view.project_img_to_bird(self.curent_image)
 
-        self.preprocess(bird_view_img)
 
-        
+        # Save bird view to file
+        # cv2.imwrite("bird_view.png", bird_view_img)
+
+        self.preprocess(bird_view_img)
 
         # get homography
         ok, M, matchesMask, kp1, kp2, good = self.get_homography_bird_to_ref(bird_view_img)
 
-        if not ok:
-            self.get_logger().info("no homography found")
+        if not ok or M is None:
             self.visualization()
             return
-
+        
         angle = self.get_angle(M)
 
         pos_cam_in_ref_pxls = np.matmul(M, np.append(self.pos_cam_in_bird_view_pxls, 1))
@@ -242,7 +245,7 @@ class VisualLocalizationNode(Node):
         kp1, des1 = self.sift_detector.detectAndCompute(bird_view, None)
 
         
-        matches = self.flann_matcher.knnMatch(des1, self.ref_des, k=2)
+        matches = self.flann_matcher.knnMatch(self.ref_des, des1, k=2)
         # store all the good matches as per Lowe's ratio test.
         good = []
         for m,n in matches:
@@ -253,29 +256,26 @@ class VisualLocalizationNode(Node):
         ok = False
         if len(good)>MIN_MATCH_COUNT:
             self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
-            src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-            dst_pts = np.float32([ self.ref_kp[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+            src_pts = np.float32([ kp1[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+            dst_pts = np.float32([ self.ref_kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
             M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
             matchesMask = mask.ravel().tolist()
-            # h,w = bird_view.shape
-            # pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-            # dst = cv2.perspectiveTransform(pts,M)
             ok = True
         else:
-            # self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+            self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
             matchesMask = None
         
-        if self.enable_viz_keypoints:
-            img_viz = cv2.drawKeypoints(bird_view.copy(), kp1, None)
+        # if self.enable_viz_keypoints:
+        #     img_viz = cv2.drawKeypoints(bird_view.copy(), kp1, None)
 
-            cv2.imshow("Keypoints", img_viz)
-            cv2.waitKey(1)
+        #     cv2.imshow("Keypoints", img_viz)
+        #     cv2.waitKey(1)
 
-            img_ref_viz = cv2.drawKeypoints(self.ref_img.copy(), self.ref_kp, None)
-            cv2.imshow("Keypoints ref", img_ref_viz)
-            cv2.waitKey(1)
+        #     img_ref_viz = cv2.drawKeypoints(self.ref_img.copy(), self.ref_kp, None)
+        #     cv2.imshow("Keypoints ref", img_ref_viz)
+        #     cv2.waitKey(1)
         
-        if self.enable_match_viz:
+        if self.enable_match_viz and ok:
             matches_img = self.draw_matches(bird_view, kp1, self.ref_kp, matchesMask, good)
             matches_img = cv2.resize(matches_img, (0,0), fx=0.5, fy=0.5)
             cv2.imshow("Matches", matches_img)
@@ -292,7 +292,7 @@ class VisualLocalizationNode(Node):
                    matchesMask = matchesMask, # draw only inliers
                    flags = 2)
         
-        img_ret = cv2.drawMatches(bird_view,kp1,self.ref_img,kp2,good,None,**draw_params)
+        img_ret = cv2.drawMatches(self.ref_img, kp2, bird_view, kp1,good, None, **draw_params)
 
         return img_ret
     
