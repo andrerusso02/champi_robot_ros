@@ -69,7 +69,7 @@ class VisualLocalizationNode(Node):
                                                     [-8.34050674e-14,  2.14454976e+01,  1.02369668e+02],
                                                     [-6.19931052e-17,  1.30331754e-02,  1.00000000e+00]])
         
-        self.pos_cam_in_bird_view_pxls = np.array([927, 1462])
+        self.pos_cam_in_bird_view_pxls = None
 
         ref_img_path = get_package_share_directory('champi_vision') + '/ressources/images/ref_img.png'
         self.ref_img = self.load_ref_image(ref_img_path)
@@ -112,6 +112,9 @@ class VisualLocalizationNode(Node):
             # initialize bird view
             K = np.array(self.camera_info.k).reshape(3,3)
             self.bird_view = bv.BirdView(K, transform_mtx, (0, -1), (2.7, 1.4), resolution=378) 
+
+            self.pos_cam_in_bird_view_pxls = self.bird_view.get_work_plane_pt_in_bird_img(np.array([0, 0, 1]))
+            ic(self.pos_cam_in_bird_view_pxls)
 
             # compute undistortion map
             self.map1, self.map2 = cv2.initUndistortRectifyMap(K, np.array(self.camera_info.d), None, K, (640,480), cv2.CV_32FC1)
@@ -180,7 +183,7 @@ class VisualLocalizationNode(Node):
         
         angle = self.get_angle(M)
 
-        pos_cam_in_ref_pxls = np.matmul(M, np.append(self.pos_cam_in_bird_view_pxls, 1))
+        pos_cam_in_ref_pxls = np.matmul(M, self.pos_cam_in_bird_view_pxls)
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls[:2] / pos_cam_in_ref_pxls[2]
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls.astype(int)
 
@@ -322,7 +325,7 @@ class VisualLocalizationNode(Node):
 
         good_matches_poses = []
         for m in good:
-            good_matches_poses.append(kp2[m.trainIdx].pt)
+            good_matches_poses.append(kp2[m.queryIdx].pt)
 
         good_matches_poses = np.array(good_matches_poses)
 
@@ -331,7 +334,7 @@ class VisualLocalizationNode(Node):
             cv2.circle(self.img_viz, tuple(pose.astype(int)), 3, (0,255, 0), -1)
         
         # draw origin cam
-        pos_cam_in_ref_pxls = np.matmul(M, np.append(self.pos_cam_in_bird_view_pxls, 1))
+        pos_cam_in_ref_pxls = np.matmul(M, self.pos_cam_in_bird_view_pxls)
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls[:2] / pos_cam_in_ref_pxls[2]
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls.astype(int)
         angle = self.get_angle(M)

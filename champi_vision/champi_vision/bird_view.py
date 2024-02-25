@@ -26,8 +26,9 @@ class BirdView:
 
         self._img_size_px = (self._pos_end_work_plane - self._pos_start_work_plane) * self._resolution
 
-        ic(self._img_size_px)
         self._img_size_px = self._img_size_px.astype(np.int32)
+
+        self.M_workplane_real_to_img_ = None
 
         self._H = None
         self._init_projection_parameters()
@@ -49,14 +50,11 @@ class BirdView:
         pts_img = self._K @ pts_cam[:3]
         pts_img = pts_img / pts_img[2]
 
-        M_workplane_real_to_img = self.compute_M_workplane_real_to_img(self._pos_end_work_plane, self._resolution)
+        self.M_workplane_real_to_img_ = self.compute_M_workplane_real_to_img(self._pos_end_work_plane, self._resolution)
 
         pts_work_plane_h = np.vstack((pts_work_plane[:2], np.ones((1,4))))
-        pts_work_plane_px = M_workplane_real_to_img @ pts_work_plane_h
+        pts_work_plane_px = self.M_workplane_real_to_img_ @ pts_work_plane_h
         pts_work_plane_px = pts_work_plane_px / pts_work_plane_px[2]
-
-        ic(pts_img[:2].T.astype(np.float32))
-        ic(pts_work_plane_px[:2].T.astype(np.float32))
 
         self._H = cv2.getPerspectiveTransform(pts_img[:2].T.astype(np.float32), pts_work_plane_px[:2].T.astype(np.float32))
 
@@ -111,9 +109,7 @@ class BirdView:
         Returns:
         numpy.ndarray: The point in the source image.
         """
-        pt = pt - self._pos_start_work_plane
-        pt = pt * self._resolution
-        pt = np.hstack((pt, 1.))
+        pt = self.M_workplane_real_to_img_ @ pt # TODO tester
         pt = np.linalg.inv(self._H) @ pt
         if pt[2] == 0:
             return None
@@ -136,8 +132,7 @@ class BirdView:
             return None
         pt = pt / pt[2]
         pt = pt[:2]
-        pt = pt / self._resolution
-        pt = pt + self._pos_start_work_plane
+        pt = np.linalg.inv(self.M_workplane_real_to_img_) @ pt # TODO tester
         return pt
     
     def get_work_plane_pt_in_bird_img(self, pt):
@@ -150,9 +145,8 @@ class BirdView:
         Returns:
         numpy.ndarray: The point in the source image (x, y) in pixel.
         """
-        pt = pt - self._pos_start_work_plane
-        pt = pt * self._resolution
-        return pt
+        pt_ret = self.M_workplane_real_to_img_ @ pt
+        return pt_ret
     
     def get_bird_img_pt_in_work_plane(self, pt):
         """
@@ -164,8 +158,7 @@ class BirdView:
         Returns:
         numpy.ndarray: The point in the work plane (x, y) in meter.
         """
-        pt = pt / self._resolution
-        pt = pt + self._pos_start_work_plane
+        pt = np.linalg.inv(self.M_workplane_real_to_img_) @ pt # TODO tester
         return pt
 
 
