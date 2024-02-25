@@ -107,7 +107,7 @@ class VisualLocalizationNode(Node):
 
             # initialize bird view
             K = np.array(self.camera_info.k).reshape(3,3)
-            self.bird_view = bv.BirdView(K, transform_mtx, (0, -1), (2.7, 1.4), resolution=378) 
+            self.bird_view = bv.BirdView(K, transform_mtx, (0.5, -1.1), (2.7, 1.1), resolution=378) 
 
             self.pos_cam_in_bird_view_pxls = self.bird_view.get_work_plane_pt_in_bird_img(np.array([0, 0, 1]))
             ic(self.pos_cam_in_bird_view_pxls)
@@ -173,10 +173,19 @@ class VisualLocalizationNode(Node):
         # get homography
         ok, M, matchesMask, kp1, kp2, good = self.get_affine_transform_bird_to_ref(bird_view_img)
 
+
         if not ok or M is None:
             self.visualization()
             return
         
+        # get scale
+        scale = np.linalg.norm(M[:2,0])
+
+        if scale < 0.4 or scale > 0.6:
+            self.visualization()
+            return
+
+
         angle = self.get_angle(M)
 
         pos_cam_in_ref_pxls = np.matmul(M, self.pos_cam_in_bird_view_pxls)
@@ -187,7 +196,7 @@ class VisualLocalizationNode(Node):
 
         self.get_logger().info(f"angle: {angle}, pos: {pos_cam_in_ref_m}")
 
-        self.visualization(bird_view_img, M, good, kp2)
+        self.visualization(bird_view_img, M, good, kp1)
 
     def draw_2D_axis(self, image, pos_pxls, angle):
         img = image.copy()
@@ -241,13 +250,14 @@ class VisualLocalizationNode(Node):
         M=None
         ok = False
         if len(good)>MIN_MATCH_COUNT:
-            self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+            # self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
             src_pts = np.float32([ kp1[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
             dst_pts = np.float32([ self.ref_kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
             M, mask = cv2.estimateAffinePartial2D(src_pts, dst_pts)
             matchesMask = mask.ravel().tolist()
             ok = True
-            M = np.concatenate([M, np.array([[0,0,1]])], axis=0) # TODO remove
+            if M is not None:
+                M = np.concatenate([M, np.array([[0,0,1]])], axis=0) # TODO remove
         else:
             self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
             matchesMask = None
@@ -335,7 +345,7 @@ class VisualLocalizationNode(Node):
 
             # draw 'not enough matches' on added_image
             self.get_logger().info("VIZ: Not enough matches")
-            cv2.putText(self.img_viz, "Not enough matches", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+            cv2.putText(self.img_viz, "Not enough matches", (10,60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
             cv2.imshow("Viz", self.img_viz)
             cv2.waitKey(1)
             return
@@ -345,21 +355,22 @@ class VisualLocalizationNode(Node):
 
         self.img_viz = cv2.cvtColor(self.img_viz, cv2.COLOR_GRAY2BGR)
 
-        good_matches_poses = []
-        for m in good:
-            good_matches_poses.append(kp2[m.queryIdx].pt)
+        # good_matches_poses = [] # TODO il faudrait les transformer
+        # for m in good:
+        #     good_matches_poses.append(kp2[m.trainIdx].pt)
 
-        good_matches_poses = np.array(good_matches_poses)
+        # good_matches_poses = np.array(good_matches_poses)
 
-        # draw matches on added_image
-        for pose in good_matches_poses:
-            cv2.circle(self.img_viz, tuple(pose.astype(int)), 3, (0,255, 0), -1)
+        # # draw matches on added_image
+        # for pose in good_matches_poses:
+        #     cv2.circle(self.img_viz, tuple(pose.astype(int)), 3, (0,255, 0), -1)
         
         # draw origin cam
         pos_cam_in_ref_pxls = np.matmul(M, self.pos_cam_in_bird_view_pxls)
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls[:2] / pos_cam_in_ref_pxls[2]
         pos_cam_in_ref_pxls = pos_cam_in_ref_pxls.astype(int)
         angle = self.get_angle(M)
+        angle += np.pi # TODO enlever
         self.img_viz = self.draw_2D_axis(self.img_viz, pos_cam_in_ref_pxls, angle)
 
         # draw origin ref
@@ -367,15 +378,10 @@ class VisualLocalizationNode(Node):
         
         self.draw_fps(self.img_viz)
 
-
         cv2.imshow("Viz", self.img_viz)
         cv2.waitKey(1)
 
 
-
-
-
-    
 
 
 def main(args=None):

@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.actions import ExecuteProcess
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -32,5 +33,10 @@ def generate_launch_description():
             parameters=[{
                 "calib_yaml_path": os.path.join(get_package_share_directory('champi_vision'), 'config', 'calib', 'raspi_cam_robotik.yaml')
             }]
+        ),
+        ExecuteProcess(
+            cmd=['ros2', 'bag', 'play', '/home/arusso/bags/coupe/rosbag2_2024_02_09-18_14_28'],
+            output='screen'
         )
+        
     ])

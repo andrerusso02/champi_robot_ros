@@ -26,6 +26,9 @@ class BirdView:
 
         self._img_size_px = (self._pos_end_work_plane - self._pos_start_work_plane) * self._resolution
 
+        # flip x and y because for ROS x is forward but for the image x is horizontal
+        self._img_size_px = np.flip(self._img_size_px)
+
         self._img_size_px = self._img_size_px.astype(np.int32)
 
         self.M_workplane_real_to_img_ = None
