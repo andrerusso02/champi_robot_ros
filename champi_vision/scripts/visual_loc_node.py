@@ -28,10 +28,15 @@ class VisualLocalizationNode(Node):
     def __init__(self):
         super().__init__('visual_loc')
 
+        self.current_pos = np.array([2.6, 1.7])
+        self.current_angle = -1.629
+
+        self.enable_masking = True
+
 
         # Parameters
         self.enable_viz_keypoints = self.declare_parameter('enable_viz_keypoints', True).value
-        self.enable_match_viz = self.declare_parameter('enable_match_viz', True).value
+        self.enable_match_viz = self.declare_parameter('enable_match_viz', False).value
 
         # Print parameters
         self.get_logger().info(f"enable_viz_keypoints: {self.enable_viz_keypoints}")
@@ -59,6 +64,8 @@ class VisualLocalizationNode(Node):
         # other stuff
 
         self.img_viz = None
+
+        self.pts_mask_viz = None
 
         self.cv_bridge = CvBridge()
 
@@ -128,12 +135,41 @@ class VisualLocalizationNode(Node):
 
         pass
 
-
-    
-
     def callback_cam_info(self, msg):
         if self.camera_info is None:
             self.camera_info = msg
+    
+
+    def draw_oriented_rectangle(self, mask, pos, angle, size):
+        # Convert position from meters to pixels
+        pos = pos * self.pxl_to_m_ref
+
+        # Create a rotation matrix
+        R = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]) 
+
+        # Compute the 4 corners of the rectangle
+        corners = np.array([[0.5, 0], [0.5, -1.5], [-0.5, -1.5], [-0.5, 0]]) * self.pxl_to_m_ref
+        corners = np.dot(corners, R.T) + pos
+
+        self.pts_mask_viz = corners
+
+        ic(corners)
+
+        # Draw the rectangle
+        cv2.fillPoly(mask, [corners.astype(np.int32)], 1)
+
+    
+
+    def make_mask(self):
+        """Creates a mask of the same dimension as the ref image,
+        with an oriented rectanle of ones where the robot is supposed to be."""
+
+        mask = np.zeros(self.ref_img.shape, dtype=np.uint8)
+
+        self.draw_oriented_rectangle(mask, self.current_pos, self.current_angle, np.array([0.5, 0.5]))
+
+        return mask
+
 
 
     def image_callback(self, msg):
@@ -194,6 +230,9 @@ class VisualLocalizationNode(Node):
 
         pos_cam_in_ref_m = pos_cam_in_ref_pxls / self.pxl_to_m_ref
 
+        self.current_pos = pos_cam_in_ref_m
+        self.current_angle = angle
+
         self.get_logger().info(f"angle: {angle}, pos: {pos_cam_in_ref_m}")
 
         self.visualization(bird_view_img, M, good, kp1)
@@ -239,6 +278,15 @@ class VisualLocalizationNode(Node):
         # find the keypoints and descriptors with SIFT
         kp1, des1 = self.sift_detector.detectAndCompute(bird_view, None)
 
+        if self.enable_masking:
+            mask = self.make_mask()
+            # ref_img_copy = cv2.bitwise_and(self.ref_img, mask)
+
+            self.ref_kp, self.ref_des =  self.sift_detector.detectAndCompute(self.ref_img, mask)
+
+            # cv2.imshow("mask", ref_img_copy)
+            # cv2.waitKey(1)
+
         
         matches = self.flann_matcher.knnMatch(self.ref_des, des1, k=2)
         # store all the good matches as per Lowe's ratio test.
@@ -270,55 +318,6 @@ class VisualLocalizationNode(Node):
         
         return ok, M, matchesMask, kp1, self.ref_kp, good
 
-    
-
-    def get_homography_bird_to_ref(self, bird_view):
-
-        MIN_MATCH_COUNT = 10
-
-        # find the keypoints and descriptors with SIFT
-        kp1, des1 = self.sift_detector.detectAndCompute(bird_view, None)
-
-        
-        matches = self.flann_matcher.knnMatch(self.ref_des, des1, k=2)
-        # store all the good matches as per Lowe's ratio test.
-        good = []
-        for m,n in matches:
-            if m.distance < 0.7*n.distance:
-                good.append(m)
-        
-        M=None
-        ok = False
-        if len(good)>MIN_MATCH_COUNT:
-            self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
-            src_pts = np.float32([ kp1[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
-            dst_pts = np.float32([ self.ref_kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-            M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
-            matchesMask = mask.ravel().tolist()
-            ok = True
-        else:
-            self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
-            matchesMask = None
-        
-        # if self.enable_viz_keypoints:
-        #     img_viz = cv2.drawKeypoints(bird_view.copy(), kp1, None)
-
-        #     cv2.imshow("Keypoints", img_viz)
-        #     cv2.waitKey(1)
-
-        #     img_ref_viz = cv2.drawKeypoints(self.ref_img.copy(), self.ref_kp, None)
-        #     cv2.imshow("Keypoints ref", img_ref_viz)
-        #     cv2.waitKey(1)
-        
-        if self.enable_match_viz and ok:
-            matches_img = self.draw_matches(bird_view, kp1, self.ref_kp, matchesMask, good)
-            matches_img = cv2.resize(matches_img, (0,0), fx=0.5, fy=0.5)
-            cv2.imshow("Matches", matches_img)
-            cv2.waitKey(1)
-        
-
-        
-        return ok, M, matchesMask, kp1, self.ref_kp, good
 
     def draw_matches(self, bird_view, kp1, kp2, matchesMask, good):
 
@@ -364,6 +363,10 @@ class VisualLocalizationNode(Node):
         # # draw matches on added_image
         # for pose in good_matches_poses:
         #     cv2.circle(self.img_viz, tuple(pose.astype(int)), 3, (0,255, 0), -1)
+
+        if self.pts_mask_viz is not None:
+            self.pts_mask_viz = self.pts_mask_viz.astype(int)
+            cv2.polylines(self.img_viz, [self.pts_mask_viz], True, (0,0,255), 2)
         
         # draw origin cam
         pos_cam_in_ref_pxls = np.matmul(M, self.pos_cam_in_bird_view_pxls)
