@@ -1,6 +1,7 @@
 # implement a simple PID controller
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 
 class PID:
     def __init__(self, Kp, Ki, Kd, dt):
@@ -9,6 +10,7 @@ class PID:
         self.Kd = Kd
 
         self.dt = dt
+        self.last_time = time.time()
 
         self.integral = 0
         self.previous_error = 0
@@ -16,6 +18,8 @@ class PID:
         self.error_curve = []
 
     def update(self, error):
+        # self.dt = time.time() - self.last_time
+        # self.last_time = time.time()
         self.integral += error * self.dt
         derivative = (error - self.previous_error) / self.dt
         self.previous_error = error

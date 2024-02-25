@@ -19,7 +19,7 @@ class TestGoal(Node):
         # pub pose stamped
         self.pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
 
-        self.goals = [[1.5, 1., 0.], [2.0, 1., 1.57079]]
+        self.goals = [[1.5, 1., 0.], [2.0, 1., 3.14]]
         self.i_goal = 1
 
         timer_period = 6  # seconds

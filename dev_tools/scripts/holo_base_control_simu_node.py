@@ -12,6 +12,9 @@ from geometry_msgs.msg import Twist
 from geometry_msgs.msg import TransformStamped
 
 
+FPS = 50
+
+
 class HoloBaseControlDummy(Node):
 
     def __init__(self):
@@ -29,7 +32,7 @@ class HoloBaseControlDummy(Node):
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        timer_period = 0.02  # seconds
+        timer_period = 1/FPS  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
         # Node variables

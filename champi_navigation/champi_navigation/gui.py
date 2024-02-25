@@ -198,9 +198,9 @@ class Gui():
         self.draw_poly(self.table.expanded_poly, YELLOW)
 
         # Dessiner les positions du robot
-        # for pos in self.robot.robot_positions: TODO
-        #     screen_x, screen_y = self.real_to_screen(pos[0], pos[1])
-        #     pygame.draw.circle(self.screen, BLUE, (screen_x, screen_y), 1)
+        for pos in self.robot.robot_positions: 
+            screen_x, screen_y = self.real_to_screen(pos[0], pos[1])
+            pygame.draw.circle(self.screen, BLUE, (screen_x, screen_y), 1)
 
         # draw all next goals by a cross and an arrow
         for i in range(len(self.robot.goals_positions)):
@@ -282,7 +282,7 @@ class Gui():
             self.screen.blit(text, textRect)
 
         # Mettre à jour l'affichage
-        pygame.display.flip() # TODO remettre
+        pygame.display.flip() 
 
     def on_click(self):
         global robot
@@ -343,8 +343,8 @@ class Gui():
         pw.update(events)
 
         # delete the last point so that the array does not get to heavy
-        # if len(self.robot.robot_positions)>500:
-        #     self.robot.robot_positions.pop(0)
+        if len(self.robot.robot_positions)>500:
+            self.robot.robot_positions.pop(0)
 
         """ENVOI MSG ROS POSE GOAL, POLY ROBOT ADVERSE"""
 
