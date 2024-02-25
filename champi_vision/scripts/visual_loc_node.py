@@ -64,10 +64,6 @@ class VisualLocalizationNode(Node):
 
         self.curent_image = None
         self.time_last_image = time.time()
-
-        self.cam_to_bird_view_transform = np.array([[ 3.43601896e+00,  1.20853081e+01, -1.66943128e+02],
-                                                    [-8.34050674e-14,  2.14454976e+01,  1.02369668e+02],
-                                                    [-6.19931052e-17,  1.30331754e-02,  1.00000000e+00]])
         
         self.pos_cam_in_bird_view_pxls = None
 
@@ -127,10 +123,10 @@ class VisualLocalizationNode(Node):
     
     def preprocess(self, image):
 
-        return
-
         # median blur
-        image = cv2.medianBlur(image, 11)
+        # image = cv2.medianBlur(image, 11)
+
+        pass
 
 
     
@@ -175,7 +171,7 @@ class VisualLocalizationNode(Node):
         self.preprocess(bird_view_img)
 
         # get homography
-        ok, M, matchesMask, kp1, kp2, good = self.get_homography_bird_to_ref(bird_view_img)
+        ok, M, matchesMask, kp1, kp2, good = self.get_affine_transform_bird_to_ref(bird_view_img)
 
         if not ok or M is None:
             self.visualization()
@@ -192,14 +188,6 @@ class VisualLocalizationNode(Node):
         self.get_logger().info(f"angle: {angle}, pos: {pos_cam_in_ref_m}")
 
         self.visualization(bird_view_img, M, good, kp2)
-
-
-    def get_bird_view(self):
-        # get bird view
-        bird_view = cv2.warpPerspective(self.curent_image, self.cam_to_bird_view_transform, (1800,1600))
-
-        return bird_view
-
 
     def draw_2D_axis(self, image, pos_pxls, angle):
         img = image.copy()
@@ -236,8 +224,42 @@ class VisualLocalizationNode(Node):
     
 
     def get_affine_transform_bird_to_ref(self, bird_view):
-        # get affine transformation between bird view and ref image
-        return cv2.estimateAffinePartial2D(bird_view, self.ref_img)
+
+        MIN_MATCH_COUNT = 10
+
+        # find the keypoints and descriptors with SIFT
+        kp1, des1 = self.sift_detector.detectAndCompute(bird_view, None)
+
+        
+        matches = self.flann_matcher.knnMatch(self.ref_des, des1, k=2)
+        # store all the good matches as per Lowe's ratio test.
+        good = []
+        for m,n in matches:
+            if m.distance < 0.7*n.distance:
+                good.append(m)
+        
+        M=None
+        ok = False
+        if len(good)>MIN_MATCH_COUNT:
+            self.get_logger().info("Enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+            src_pts = np.float32([ kp1[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+            dst_pts = np.float32([ self.ref_kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+            M, mask = cv2.estimateAffinePartial2D(src_pts, dst_pts)
+            matchesMask = mask.ravel().tolist()
+            ok = True
+            M = np.concatenate([M, np.array([[0,0,1]])], axis=0) # TODO remove
+        else:
+            self.get_logger().info("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+            matchesMask = None
+        
+        if self.enable_match_viz and ok:
+            matches_img = self.draw_matches(bird_view, kp1, self.ref_kp, matchesMask, good)
+            matches_img = cv2.resize(matches_img, (0,0), fx=0.5, fy=0.5)
+            cv2.imshow("Matches", matches_img)
+            cv2.waitKey(1)
+        
+        return ok, M, matchesMask, kp1, self.ref_kp, good
+
     
 
     def get_homography_bird_to_ref(self, bird_view):
